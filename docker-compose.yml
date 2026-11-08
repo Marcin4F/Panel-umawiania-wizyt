@@ -1,9 +1,19 @@
 services:
   db:
-    image: redis:7-alpine
-    container_name: appointments_redis
-    ports:
-      - "6379:6379"
+    image: postgres:17-alpine
+    container_name: appointments_postgres
+    environment:
+      - POSTGRES_DB=wizyty
+      - POSTGRES_USER=wizyty
+      - POSTGRES_PASSWORD=wizyty
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -h localhost -U wizyty -d wizyty" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   backend:
     build:
@@ -13,14 +23,19 @@ services:
     volumes:
       - ./backend:/app
     environment:
-      - REDIS_HOST=db
-      - REDIS_PORT=6379
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_NAME=wizyty
+      - DB_USER=wizyty
+      - DB_PASSWORD=wizyty
     ports:
       - "8000:8000"
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" ]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -41,4 +56,7 @@ services:
       backend:
         condition: service_healthy
 
-#dokument napisany przy pomocy AI
+volumes:
+  pgdata:
+
+    #dokument napisany przy pomocy AI

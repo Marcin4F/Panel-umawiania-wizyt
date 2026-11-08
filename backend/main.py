@@ -1,15 +1,32 @@
-import json
 import os
 from typing import Optional
 from fastapi import FastAPI, HTTPException, status, Query
 from pydantic import BaseModel, Field
-import redis
+import psycopg
+from psycopg.rows import dict_row
 
-REDIS_HOST = os.getenv("REDIS_HOST", "db")
-REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+# Pomoc AI przy przejściu na postgreSQL
+DB_HOST = os.getenv("DB_HOST", "db")
+DB_PORT = int(os.getenv("DB_PORT", 5432))
+DB_NAME = os.getenv("DB_NAME", "wizyty")
+DB_USER = os.getenv("DB_USER", "wizyty")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "wizyty")
 
 app = FastAPI(title="Panel umawiania wizyt API")
-client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+
+
+def polacz():
+    # Nowe polaczenie przy kazdym zapytaniu (mala skala, wiec wystaarcza)
+    # dict_row sprawia ze wiersze wracaja jako slowniki, wiec fastAPI od razu zamienia je na json
+    return psycopg.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        dbname=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        row_factory=dict_row,
+        connect_timeout=3,
+    )
 
 
 class AppointmentCreate(BaseModel):
@@ -29,62 +46,69 @@ class AppointmentUpdate(BaseModel):
 @app.get("/health", status_code=status.HTTP_200_OK)
 def health_check():
     try:
-        client.ping()
-        return {"status": "healthy", "redis": "connected"}
+        with polacz() as conn:
+            conn.execute("SELECT 1")
+        return {"status": "healthy", "database": "connected"}
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Redis unavailable: {str(e)}",
+            detail=f"Baza danych niedostępna: {e}",
         )
 
 
 @app.get("/appointments")
 def get_all_appointments(tylko_dostepne: bool = Query(False)):
-    keys = client.keys("appointment:*")
-    appointments = []
-    for key in keys:
-        raw_data = client.get(key)
-        if raw_data:
-            appointments.append(json.loads(raw_data))
-
-    appointments.sort(key=lambda item: item.get("id", 0))
-
+    sql = "SELECT id, lekarz, godzina, dostepna FROM wizyty"
     if tylko_dostepne:
-        appointments = [a for a in appointments if a.get("dostepna") is True]
+        sql += " WHERE dostepna = TRUE"
+    sql += " ORDER BY id"
 
-    return appointments
+    with polacz() as conn:
+        return conn.execute(sql).fetchall()
 
 
 @app.get("/appointments/{appointment_id}")
 def get_appointment(appointment_id: int):
-    raw_data = client.get(f"appointment:{appointment_id}")
-    if not raw_data:
+    with polacz() as conn:
+        wizyta = conn.execute(
+            "SELECT id, lekarz, godzina, dostepna FROM wizyty WHERE id = %s",
+            (appointment_id,),
+        ).fetchone()
+
+    if wizyta is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Wizyta o ID {appointment_id} nie istnieje.",
         )
-    return json.loads(raw_data)
+    return wizyta
 
 
 @app.post("/appointments", status_code=status.HTTP_201_CREATED)
 def create_appointment(payload: AppointmentCreate):
-    # Generowanie auto-inkrementowanego ID w Redis
-    new_id = client.incr("appointment_id_seq")
-    appointment_data = {"id": new_id, **payload.model_dump()}
-
-    client.set(f"appointment:{new_id}", json.dumps(appointment_data))
-    return appointment_data
+    # RETURNING zwraca od razu cały zapisany wiersz razem z id nadanym przez bazę
+    with polacz() as conn:
+        wizyta = conn.execute(
+            """
+            INSERT INTO wizyty (lekarz, godzina, dostepna)
+            VALUES (%s, %s, %s)
+            RETURNING id, lekarz, godzina, dostepna
+            """,
+            (payload.lekarz, payload.godzina, payload.dostepna),
+        ).fetchone()
+    return wizyta
 
 
 @app.delete("/appointments/{appointment_id}", status_code=status.HTTP_200_OK)
 def delete_appointment(appointment_id: int):
-    key = f"appointment:{appointment_id}"
-    if not client.exists(key):
+    with polacz() as conn:
+        kursor = conn.execute("DELETE FROM wizyty WHERE id = %s", (appointment_id,))
+
+    # rowcount mówi, ile wierszy usunięto - 0 oznacza, że takiej wizyty nie było
+    if kursor.rowcount == 0:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Wizyta o ID {appointment_id} nie istnieje.",
         )
-    client.delete(key)
     return {"message": f"Wizyta o ID {appointment_id} została usunięta."}
 
 
