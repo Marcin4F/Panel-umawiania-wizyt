@@ -1,21 +1,44 @@
-# przygotowane przy wsparciu AI
-version: '3.8'
 services:
   db:
-    image: redis:alpine
+    image: redis:7-alpine
+    container_name: appointments_redis
     ports:
       - "6379:6379"
-  
+
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: appointments_backend
+    volumes:
+      - ./backend:/app
+    environment:
+      - REDIS_HOST=db
+      - REDIS_PORT=6379
     ports:
       - "8000:8000"
     depends_on:
       - db
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: appointments_frontend
+    volumes:
+      - ./frontend:/app
+    environment:
+      - BACKEND_URL=http://backend:8000
     ports:
       - "8501:8501"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+
+#dokument napisany przy pomocy AI
