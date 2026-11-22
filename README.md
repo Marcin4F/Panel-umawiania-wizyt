@@ -13,13 +13,18 @@ Frontend nigdy nie łączy się bezpośrednio z bazą danych - cała komunikacja
 
 1. **Warstwa prezentacji (Frontend)**
    * Technologia: `Python` + `Streamlit`
-   * Działanie: Pobiera z backendu listę wizyt w formacie JSON i wyświetla ją w tabeli. Pozwala dodać nową wizytę (formularz) oraz usunąć istniejącą (przycisk „Usuń” przy każdej wizycie).
+   * Działanie: Komunikuje się wyłącznie z API backendu (biblioteka `requests`, dane w formacie JSON). Składa się z trzech ekranów (aplikacja wielostronicowa Streamlit, przełączanie przyciskami lub z menu bocznego):
+     * **Panel umawiania wizyt** ([frontend/app.py](frontend/app.py)) - tabela wizyt (ID, lekarz, godzina, specjalizacja, gabinet, dostępność) z przyciskiem „Usuń” przy każdej wizycie, filtr „Pokaż tylko dostępne wizyty” (`GET /appointments?tylko_dostepne=true`) oraz formularz dodawania wizyty, w którym lekarza wybiera się z listy pobranej z `GET /doctors` (wysyłane jest `lekarz_id`).
+     * **Znajdź wizytę po ID** ([frontend/pages/wizyta.py](frontend/pages/wizyta.py)) - wyszukanie pojedynczej wizyty (`GET /appointments/{id}`).
+     * **Szczegóły lekarza** ([frontend/pages/lekarze.py](frontend/pages/lekarze.py)) - wybór lekarza z listy i wyświetlenie jego danych: godzin pracy, gabinetu i statusu (`GET /doctors/{id}`).
+   * Każdy ekran sprawdza na starcie połączenie z backendem (`GET /health`).
+   * Kontener budowany z własnego [frontend/Dockerfile](frontend/Dockerfile) (obraz `python:3.13-alpine`, kod kopiowany do obrazu).
    * Dostępny lokalnie pod adresem: `http://localhost:8501`
-   * **Uwaga:** formularz dodawania wizyty wysyła jeszcze pole `lekarz` (tekst), a backend wymaga teraz `lekarz_id`, więc dodawanie wizyt z poziomu frontendu tymczasowo nie działa. Do zrobienia: wybór lekarza z listy pobieranej z `GET /doctors`.
 
 2. **Warstwa logiki biznesowej (Backend)**
    * Technologia: `Python` + `FastAPI` + `Uvicorn` + `psycopg`
    * Działanie: Wystawia REST API (opisane niżej), waliduje dane wejściowe i wykonuje zapytania SQL do bazy.
+   * Kontener budowany z własnego [backend/Dockerfile](backend/Dockerfile).
    * Dostępny lokalnie pod adresem: `http://localhost:8000` (interaktywna dokumentacja API: `http://localhost:8000/docs`)
 
 3. **Warstwa danych (Baza danych)**
@@ -132,7 +137,7 @@ Wszystkie dane są przesyłane w formacie **JSON** (nagłówek `Content-Type: ap
 
 ### Obiekt wizyty
 
-Backend łączy tabele `wizyty` i `lekarze` (`JOIN`), więc w odpowiedzi oprócz `lekarz_id` są też imię i nazwisko oraz specjalizacja lekarza.
+Backend łączy tabele `wizyty` i `lekarze` (`JOIN`), więc w odpowiedzi oprócz `lekarz_id` są też imię i nazwisko, specjalizacja i gabinet lekarza.
 
 ```json
 {
@@ -140,6 +145,7 @@ Backend łączy tabele `wizyty` i `lekarze` (`JOIN`), więc w odpowiedzi oprócz
   "lekarz_id": 1,
   "lekarz": "Jan Kowalski",
   "specjalizacja": "Internista",
+  "gabinet": "101",
   "godzina": "08:00",
   "dostepna": false
 }
@@ -151,6 +157,7 @@ Backend łączy tabele `wizyty` i `lekarze` (`JOIN`), więc w odpowiedzi oprócz
 | `lekarz_id` | liczba całkowita | tak | liczba > 0; lekarz musi istnieć i być aktywny |
 | `lekarz` | tekst | nie (tylko w odpowiedzi) | - |
 | `specjalizacja` | tekst | nie (tylko w odpowiedzi) | - |
+| `gabinet` | tekst lub `null` | nie (tylko w odpowiedzi) | - |
 | `godzina` | tekst | tak | format `HH:MM`, zakres `00:00`-`23:59`; musi mieścić się w godzinach pracy lekarza (`godzina_od` ≤ godzina < `godzina_do`) i nie może być zajęta u tego lekarza |
 | `dostepna` | wartość logiczna | nie (domyślnie `true`) | `true` / `false` |
 
@@ -201,15 +208,15 @@ Gdy baza jest niedostępna → `503 Service Unavailable`:
 
 ```json
 [
-  { "id": 1, "lekarz_id": 1, "lekarz": "Jan Kowalski", "specjalizacja": "Internista", "godzina": "08:00", "dostepna": false },
-  { "id": 2, "lekarz_id": 1, "lekarz": "Jan Kowalski", "specjalizacja": "Internista", "godzina": "08:30", "dostepna": true }
+  { "id": 1, "lekarz_id": 1, "lekarz": "Jan Kowalski", "specjalizacja": "Internista", "gabinet": "101", "godzina": "08:00", "dostepna": false },
+  { "id": 2, "lekarz_id": 1, "lekarz": "Jan Kowalski", "specjalizacja": "Internista", "gabinet": "101", "godzina": "08:30", "dostepna": true }
 ]
 ```
 
 **`GET /appointments/1`** → `200 OK`
 
 ```json
-{ "id": 1, "lekarz_id": 1, "lekarz": "Jan Kowalski", "specjalizacja": "Internista", "godzina": "08:00", "dostepna": false }
+{ "id": 1, "lekarz_id": 1, "lekarz": "Jan Kowalski", "specjalizacja": "Internista", "gabinet": "101", "godzina": "08:00", "dostepna": false }
 ```
 
 **`POST /appointments`**
@@ -223,7 +230,7 @@ Treść żądania:
 Odpowiedź → `201 Created` (zapisana wizyta razem z nadanym `id` i danymi lekarza):
 
 ```json
-{ "id": 12, "lekarz_id": 2, "lekarz": "Anna Nowak", "specjalizacja": "Dermatolog", "godzina": "12:00", "dostepna": true }
+{ "id": 12, "lekarz_id": 2, "lekarz": "Anna Nowak", "specjalizacja": "Dermatolog", "gabinet": "204", "godzina": "12:00", "dostepna": true }
 ```
 
 **`DELETE /appointments/1`** → `200 OK`
