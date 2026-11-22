@@ -88,4 +88,46 @@ try:
 except Exception as e:
     st.error(f"Błąd połączenia z backendem: {e}")
 
+col_search1, col_search2 = st.columns(2)
+
+with col_search1:
+    with st.expander("Wyszukaj wizytę po ID"):
+        wizyta_id = st.number_input("ID wizyty", min_value=1, step=1, key="search_app_id")
+        if st.button("Szukaj wizyty"):
+            try:
+                res = requests.get(f"{BACKEND_URL}/appointments/{wizyta_id}", timeout=5)
+                if res.status_code == 200:
+                    w = res.json()
+                    st.success(f"Wizyta #{w['id']}: {w['lekarz']} ({w['specjalizacja']})")
+                    st.write(f"Godzina: **{w['godzina']}** | Dostępna: **{w['dostepna']}**")
+                elif res.status_code == 404:
+                    st.warning(res.json().get("detail", "Nie znaleziono wizyty."))
+                else:
+                    st.error(f"Błąd serwera: {res.status_code}")
+            except Exception as e:
+                st.error(f"Błąd połączenia z backendem: {e}")
+
+with col_search2:
+    with st.expander("Wyszukaj lekarza"):
+        wybrany_lekarz_szukaj = st.selectbox(
+            "Wybierz lekarza",
+            options=doctors_data,
+            format_func=lambda x: f"{x['imie']} {x['nazwisko']} ({x['specjalizacja']})",
+            key="search_doc_select"
+        )
+        if st.button("Pokaż szczegóły lekarza", disabled=not doctors_data):
+            try:
+                res = requests.get(f"{BACKEND_URL}/doctors/{wybrany_lekarz_szukaj['id']}", timeout=5)
+                if res.status_code == 200:
+                    d = res.json()
+                    status_txt = "Aktywny" if d["aktywny"] else "Nieaktywny"
+                    st.success(f"Lekarz #{d['id']}: {d['imie']} {d['nazwisko']} ({d['specjalizacja']})")
+                    st.write(f"Godziny: **{d['godzina_od']}–{d['godzina_do']}** | Gabinet: **{d['gabinet']}** | Status: **{status_txt}**")
+                elif res.status_code == 404:
+                    st.warning(res.json().get("detail", "Nie znaleziono lekarza."))
+                else:
+                    st.error(f"Błąd serwera: {res.status_code}")
+            except Exception as e:
+                st.error(f"Błąd połączenia z backendem: {e}")
+
 #Wspomaganie AI podczas ustalania wyglądu np 'st.columns([1, 3, 2, 2, 2])' oraz powtarzajacth sie sekwencji kodu np kolumn.
