@@ -50,6 +50,7 @@ WIZYTA_SELECT = """
            w.lekarz_id,
            l.imie || ' ' || l.nazwisko AS lekarz,
            l.specjalizacja,
+           l.gabinet,
            w.godzina,
            w.dostepna
     FROM wizyty w
@@ -129,7 +130,7 @@ def create_appointment(payload: AppointmentCreate):
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Lekarz ma już wizytę o godzinie {payload.godzina}.",
             )
-    return conn.execute(WIZYTA_SELECT + " WHERE w.id = %s", (nowa["id"],)).fetchone()
+        return conn.execute(WIZYTA_SELECT + " WHERE w.id = %s", (nowa["id"],)).fetchone()
 
 
 @app.delete("/appointments/{appointment_id}", status_code=status.HTTP_200_OK)
